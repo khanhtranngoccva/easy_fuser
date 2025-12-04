@@ -472,18 +472,24 @@ impl<T: Send + Sync + 'static> InodeMapper<T> {
         });
 
         // Insert the child into the new parent's children map
-        if let Some(old_inode) = self
+        if let Some(_) = self
             .data
             .children
             .get_mut(newparent)
             .and_then(|children| children.insert(newname, child_inode))
         {
-            let InodeValue {
-                parent: _,
-                name: _,
-                data,
-            } = self.data.inodes.remove(&old_inode).unwrap();
-            Ok(Some((old_inode, data)))
+            // The FUSE file system owns the old inode until it issues enough forget calls
+            // to reduce the inode's reference count to 0. Therefore, inodes may not be removed from
+            // this list outside of the remove() abstraction, which is only called when refcount
+            // is 0. This corresponds to behavior where files continue to write to an old inode even
+            // if the inode has already been unlinked by either rename, unlink, or rmdir syscalls.
+            // let InodeValue {
+            //     parent: _,
+            //     name: _,
+            //     data,
+            // } = self.data.inodes.remove(&old_inode).unwrap();
+            // Ok(Some((old_inode, data)))
+            Ok(None)
         } else {
             Ok(None)
         }
