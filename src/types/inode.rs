@@ -44,6 +44,11 @@ impl Inode {
     pub fn add_one(&self) -> Self {
         Inode::from(u64::from(self.clone()) + 1)
     }
+
+    /// Converts an inode into its raw form
+    pub fn as_raw(&self) -> u64 {
+        self.0
+    }
 }
 
 impl From<Inode> for u64 {

@@ -42,6 +42,14 @@ impl InodeResolvable for Vec<OsString> {
     }
 }
 
+impl InodeResolvable for HybridId {
+    type Resolver = HybridResolver;
+
+    fn create_resolver() -> Self::Resolver {
+        HybridResolver::new()
+    }
+}
+
 /// FileIdResolver
 /// FileIdResolver handles its data behind Locks if needed and should not be nested inside a Mutex
 pub trait FileIdResolver: Send + Sync + 'static {
@@ -233,6 +241,52 @@ impl FileIdResolver for PathResolver {
             .iter()
             .rev()
             .collect::<PathBuf>()
+    }
+
+    fn lookup(
+        &self,
+        parent: u64,
+        child: &OsStr,
+        id: <Self::ResolvedType as FileIdType>::_Id,
+        increment: bool,
+    ) -> u64 {
+        self.resolver.lookup(parent, child, id, increment)
+    }
+
+    fn add_children(
+        &self,
+        parent: u64,
+        children: Vec<(OsString, <Self::ResolvedType as FileIdType>::_Id)>,
+        increment: bool,
+    ) -> Vec<(OsString, u64)> {
+        self.resolver.add_children(parent, children, increment)
+    }
+
+    fn forget(&self, ino: u64, nlookup: u64) {
+        self.resolver.forget(ino, nlookup);
+    }
+
+    fn rename(&self, parent: u64, name: &OsStr, newparent: u64, newname: &OsStr) {
+        self.resolver.rename(parent, name, newparent, newname);
+    }
+}
+
+pub struct HybridResolver {
+    resolver: PathResolver,
+}
+
+impl FileIdResolver for HybridResolver {
+    type ResolvedType = HybridId;
+
+    fn new() -> Self {
+        Self {
+            resolver: PathResolver::new(),
+        }
+    }
+
+    fn resolve_id(&self, ino: u64) -> Self::ResolvedType {
+        let internal_resolved = self.resolver.resolve_id(ino);
+        HybridId(Inode::from(ino), internal_resolved)
     }
 
     fn lookup(

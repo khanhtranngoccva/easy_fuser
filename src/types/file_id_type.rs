@@ -10,15 +10,14 @@
 use std::{
     ffi::OsString,
     fmt::{Debug, Display},
+    hash::Hash,
     path::{Path, PathBuf},
 };
 
-use fuser::FileType as FileKind;
-
-use crate::core::InodeResolvable;
-
 use super::arguments::FileAttribute;
 use super::inode::*;
+use crate::core::InodeResolvable;
+use fuser::FileType as FileKind;
 
 /// Represents the type used to identify files in the file system.
 ///
@@ -38,6 +37,12 @@ use super::inode::*;
 ///    - Pros: Slightly lower overhead than PathBuf, allows path to be divided into parts.
 ///    - Cons: Path components are stored in reverse order, which may require additional handling.
 ///    - Root: Represented by an empty vector.
+///
+/// 4. `HybridId`: Composes of an `Inode` and a `PathBuf`. Also uses file paths for identification, but also exposes the managed inode number.
+///    - Pros: Automatic inode-to-path mapping and caching, while allowing an escape hatch when precise inode management is required
+///         (for example when tracking inode reference counts to prevent dangerous operations while any handles to the inode are still open)
+///    - Cons: May have performance overhead for large file systems.
+///    - Root: Represented by the constant ROOT_INODE with a value of 1, and an empty string as a path.
 pub trait FileIdType:
     'static + Debug + Clone + PartialEq + Eq + std::hash::Hash + InodeResolvable
 {
@@ -138,6 +143,58 @@ impl FileIdType for Vec<OsString> {
 
     fn is_filesystem_root(&self) -> bool {
         self.is_empty()
+    }
+
+    fn extract_metadata(metadata: Self::Metadata) -> (Self::_Id, FileAttribute) {
+        ((), metadata)
+    }
+
+    fn extract_minimal_metadata(minimal_metadata: Self::MinimalMetadata) -> (Self::_Id, FileKind) {
+        ((), minimal_metadata)
+    }
+}
+
+#[derive(Debug, Clone, Eq)]
+pub struct HybridId(pub Inode, pub PathBuf);
+
+impl PartialEq for HybridId {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Hash for HybridId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
+impl HybridId {
+    pub fn inode(&self) -> &Inode {
+        &self.0
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.1
+    }
+}
+
+impl FileIdType for HybridId {
+    type _Id = ();
+    type Metadata = FileAttribute;
+    type MinimalMetadata = FileKind;
+
+    fn display(&self) -> impl Display {
+        format!("HybridId({}, {})", self.0.as_raw(), self.1.display())
+    }
+
+    fn is_filesystem_root(&self) -> bool {
+        let inode_eq = self.0 == ROOT_INODE;
+        let path_eq = self.1.as_os_str().is_empty();
+        if inode_eq ^ path_eq == false {
+            panic!("an empty pathbuf must have ROOT_INODE, and vice versa");
+        }
+        inode_eq
     }
 
     fn extract_metadata(metadata: Self::Metadata) -> (Self::_Id, FileAttribute) {
