@@ -383,6 +383,16 @@ pub trait FuseHandler<TId: FileIdType>: OptionalSendSync + 'static {
         self.get_inner().opendir(req, file_id, flags)
     }
 
+    /// Performs final steps after a lookup is successful
+    fn post_lookup(
+        &self,
+        req: &RequestInfo,
+        file_id: TId,
+        metadata: &FileAttribute,
+    ) -> FuseResult<()> {
+        self.get_inner().post_lookup(req, file_id, metadata)
+    }
+
     /// Read data from a file
     ///
     /// Read should send exactly the number of bytes requested except on EOF or error, otherwise the rest of the data will be substituted with zeroes. An exception to this is when the file has been opened in ‘direct_io’ mode, in which case the return value of the read system call will reflect the return value of this operation. fh will contain the value set by the open method, or will be undefined if the open method didn’t set any value.

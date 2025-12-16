@@ -662,6 +662,15 @@ impl<TId: FileIdType> FuseHandler<TId> for DefaultFuseHandler {
         ))
     }
 
+    fn post_lookup(
+        &self,
+        _req: &RequestInfo,
+        _file_id: TId,
+        _metadata: &FileAttribute,
+    ) -> FuseResult<()> {
+        Ok(())
+    }
+
     fn read(
         &self,
         _req: &RequestInfo,

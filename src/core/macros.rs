@@ -11,17 +11,9 @@ macro_rules! handle_fuse_reply_entry {
         }
 
         let handler = $handler;
-        match handler.$function($($args),*) {
+        let metadata = match handler.$function($($args),*) {
             Ok(metadata) => {
-                let default_ttl = handler.get_default_ttl();
-                let (id, file_attr) = TId::extract_metadata(metadata);
-                let ino = $resolver.lookup($parent, $name, id, true);
-                let (fuse_attr, ttl, generation) = file_attr.to_fuse(ino);
-                $reply.entry(
-                    &ttl.unwrap_or(default_ttl),
-                    &fuse_attr,
-                    generation.unwrap_or(get_random_generation()),
-                );
+                metadata
             }
             Err(e) => {
                 if_lookup!($function, {
@@ -35,9 +27,30 @@ macro_rules! handle_fuse_reply_entry {
                 }, {
                     warn!("{}: parent_ino {:x?}, [{}], {:?}", stringify!($function), $parent, e, $req);
                 });
-                $reply.error(e.raw_error())
+                $reply.error(e.raw_error());
+                return;
             }
-        }
+        };
+        let default_ttl = handler.get_default_ttl();
+        let (id, file_attr) = TId::extract_metadata(metadata);
+        let ino = $resolver.lookup($parent, $name, id, true);
+        let resolved_id = $resolver.resolve_id(ino);
+        match handler.post_lookup($req, resolved_id, &file_attr) {
+            Ok(_) => {
+            },
+            Err(e) => {
+                warn!("{}: parent_ino {:x?}, [{}], {:?}", stringify!($function), $parent, e, $req);
+                $resolver.forget(ino, 1);
+                $reply.error(e.raw_error());
+                return;
+            }
+        };
+        let (fuse_attr, ttl, generation) = file_attr.to_fuse(ino);
+        $reply.entry(
+            &ttl.unwrap_or(default_ttl),
+            &fuse_attr,
+            generation.unwrap_or(get_random_generation()),
+        );
     };
 }
 
