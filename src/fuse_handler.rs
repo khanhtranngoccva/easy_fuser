@@ -388,7 +388,7 @@ pub trait FuseHandler<TId: FileIdType>: OptionalSendSync + 'static {
         &self,
         req: &RequestInfo,
         file_id: TId,
-        metadata: &FileAttribute,
+        metadata: &mut FileAttribute,
     ) -> FuseResult<()> {
         self.get_inner().post_lookup(req, file_id, metadata)
     }

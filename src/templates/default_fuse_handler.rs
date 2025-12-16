@@ -666,7 +666,7 @@ impl<TId: FileIdType> FuseHandler<TId> for DefaultFuseHandler {
         &self,
         _req: &RequestInfo,
         _file_id: TId,
-        _metadata: &FileAttribute,
+        _metadata: &mut FileAttribute,
     ) -> FuseResult<()> {
         Ok(())
     }

@@ -32,10 +32,10 @@ macro_rules! handle_fuse_reply_entry {
             }
         };
         let default_ttl = handler.get_default_ttl();
-        let (id, file_attr) = TId::extract_metadata(metadata);
+        let (id, mut file_attr) = TId::extract_metadata(metadata);
         let ino = $resolver.lookup($parent, $name, id, true);
         let resolved_id = $resolver.resolve_id(ino);
-        match handler.post_lookup($req, resolved_id, &file_attr) {
+        match handler.post_lookup($req, resolved_id, &mut file_attr) {
             Ok(_) => {
             },
             Err(e) => {
