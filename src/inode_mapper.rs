@@ -472,18 +472,25 @@ impl<T: Send + Sync + 'static> InodeMapper<T> {
         });
 
         // Insert the child into the new parent's children map
-        if let Some(old_inode) = self
+        if let Some(_) = self
             .data
             .children
-            .get_mut(newparent)
-            .and_then(|children| children.insert(newname, child_inode))
+            .entry(newparent.clone())
+            .or_insert_with(HashMap::new)
+            .insert(newname, child_inode)
         {
-            let InodeValue {
-                parent: _,
-                name: _,
-                data,
-            } = self.data.inodes.remove(&old_inode).unwrap();
-            Ok(Some((old_inode, data)))
+            // The FUSE file system owns the old inode until it issues enough forget calls
+            // to reduce the inode's reference count to 0. Therefore, inodes may not be removed from
+            // this list outside of the remove() abstraction, which is only called when refcount
+            // is 0. This corresponds to behavior where files continue to write to an old inode even
+            // if the inode has already been unlinked by either rename, unlink, or rmdir syscalls.
+            // let InodeValue {
+            //     parent: _,
+            //     name: _,
+            //     data,
+            // } = self.data.inodes.remove(&old_inode).unwrap();
+            // Ok(Some((old_inode, data)))
+            Ok(None)
         } else {
             Ok(None)
         }
@@ -744,6 +751,71 @@ mod tests {
         let inode_value = mapper.get(&child).unwrap();
         assert_eq!(inode_value.parent, &parent2);
         assert_eq!(inode_value.name.as_os_str(), OsStr::new("new_name"));
+    }
+
+    #[test]
+    fn test_rename_child_inode_into_empty_dir_inode() {
+        let mut mapper = InodeMapper::new(());
+        let root = mapper.get_root_inode();
+
+        // Insert initial structure
+        let parent1 = mapper
+            .insert_child(&root, OsString::from("parent1"), |_| ())
+            .unwrap();
+        let parent2 = mapper
+            .insert_child(&parent1, OsString::from("parent2"), |_| ())
+            .unwrap();
+        let child = mapper
+            .insert_child(&root, OsString::from("test_name"), |_| ())
+            .unwrap();
+
+        // Perform rename
+        let result = mapper.rename(
+            &root,
+            OsStr::new("test_name"),
+            &parent2,
+            OsString::from("test_name"),
+        );
+
+        // Assert successful rename
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), None);
+
+        // Verify new location
+        let renamed_child = mapper.lookup(&parent2, OsStr::new("test_name"));
+        assert!(renamed_child.is_some());
+        assert_eq!(renamed_child.unwrap().inode, &child);
+
+        // Verify old location is empty
+        assert!(mapper.lookup(&root, OsStr::new("test_name")).is_none());
+
+        // Verify inode data is updated
+        let inode_value = mapper.get(&child).unwrap();
+        assert_eq!(inode_value.parent, &parent2);
+        assert_eq!(inode_value.name.as_os_str(), OsStr::new("test_name"));
+
+        // Perform rename back to original path
+        let result = mapper.rename(
+            &parent2,
+            OsStr::new("test_name"),
+            &root,
+            OsString::from("test_name"),
+        );
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), None);
+
+        // Verify new location
+        let renamed_child = mapper.lookup(&root, OsStr::new("test_name"));
+        assert!(renamed_child.is_some());
+        assert_eq!(renamed_child.unwrap().inode, &child);
+
+        // Verify old location is empty
+        assert!(mapper.lookup(&parent2, OsStr::new("test_name")).is_none());
+
+        // Verify inode data is updated
+        let inode_value = mapper.get(&child).unwrap();
+        assert_eq!(inode_value.parent, &root);
+        assert_eq!(inode_value.name.as_os_str(), OsStr::new("test_name"));
     }
 
     #[test]
