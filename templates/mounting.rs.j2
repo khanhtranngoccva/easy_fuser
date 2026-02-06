@@ -8,10 +8,10 @@ use fuser::{Config, MountOption, SessionACL};
 
 pub struct MountConfig {
     {% if mode == "parallel" %}
-        num_threads: usize,
+        pub num_threads: usize,
     {% endif %}
-    mount_options: Vec<MountOption>,
-    acl: SessionACL,
+    pub mount_options: Vec<MountOption>,
+    pub acl: SessionACL,
 }
 
 

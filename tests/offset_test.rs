@@ -1,4 +1,4 @@
-use easy_fuser::prelude::*;
+use easy_fuser::{MountConfig, prelude::*};
 use easy_fuser::templates::{DefaultFuseHandler, mirror_fs::*};
 
 use std::fs::{self, File};
@@ -20,16 +20,8 @@ fn test_mirror_fs_file_offsets() {
     let mntpoint_clone = mntpoint.clone();
     let handle = std::thread::spawn(move || {
         let fs = MirrorFs::new(source_path.clone(), DefaultFuseHandler::new());
-        let config = {
-            let mut config = Config::default();
-            config.acl = fuser::SessionACL::Owner;
-            if cfg!(feature = "serial") {
-                config.n_threads = None;
-            } else {
-                config.n_threads = Some(4);
-            }
-            config.mount_options = vec![];
-            config
+        let config = MountConfig {
+            
         };
         mount(fs, &mntpoint_clone, &config).unwrap();
     });
