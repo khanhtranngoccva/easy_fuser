@@ -205,7 +205,7 @@ where
     fn reserve_inode_space(&mut self, entries_count: usize) {
         if self.data.inodes.is_empty() {
             self.data.inodes.reserve(entries_count);
-        } else if self.data.inodes.capacity() < self.data.inodes.len() + entries_count {
+        } else if self.data.inodes.capacity() * 2 < self.data.inodes.len() + entries_count {
             self.data
                 .inodes
                 .reserve(entries_count + self.data.inodes.len() - self.data.inodes.capacity());
@@ -215,7 +215,7 @@ where
     fn reserve_children_space(&mut self, entries_count: usize) {
         if self.data.children.is_empty() {
             self.data.children.reserve(entries_count);
-        } else if self.data.children.capacity() < self.data.children.len() + entries_count {
+        } else if self.data.children.capacity() * 2 < self.data.children.len() + entries_count {
             self.data
                 .children
                 .reserve(entries_count + self.data.children.len() - self.data.children.capacity());
@@ -226,7 +226,7 @@ where
         if let Some(parent_children) = self.data.children.get_mut(parent) {
             if parent_children.is_empty() {
                 parent_children.reserve(entries_count);
-            } else if parent_children.capacity() < parent_children.len() + entries_count {
+            } else if parent_children.capacity() * 2 < parent_children.len() + entries_count {
                 parent_children
                     .reserve(entries_count + parent_children.len() - parent_children.capacity());
             }
@@ -240,7 +240,7 @@ where
     fn reserve_backing_space(&mut self, entries_count: usize) {
         if self.data.backing.is_empty() {
             self.data.backing.reserve(entries_count);
-        } else if self.data.backing.capacity() < self.data.backing.len() + entries_count {
+        } else if self.data.backing.capacity() * 2 < self.data.backing.len() + entries_count {
             self.data
                 .backing
                 .reserve(entries_count + self.data.backing.len() - self.data.backing.capacity());
@@ -258,7 +258,7 @@ where
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
                 backing_id.hash(&mut hasher);
                 let hash = hasher.finish();
-                let mut preferred_inode = Inode::new(hash);
+                let mut preferred_inode = Inode::from(hash);
                 loop {
                     if self.data.inodes.get(&preferred_inode).is_none() {
                         break preferred_inode;
@@ -706,14 +706,14 @@ where
     pub fn resolve_all<'a>(
         &'a self,
         inode: &Inode,
-        limit: usize,
+        limit: Option<usize>,
     ) -> Vec<Vec<InodeResolveItem<'a, Data>>> {
         let mut result = vec![];
 
         fn scoped_resolve<'a, Data, BackingId>(
             mapper: &'a InodeMultiMapper<Data, BackingId>,
             result: &mut Vec<Vec<InodeResolveItem<'a, Data>>>,
-            limit: usize,
+            limit: Option<usize>,
             current_inode: &Inode,
             resolve_item_stack: &mut Vec<InodeResolveItem<'a, Data>>,
             visited_stack: &mut HashSet<Inode>,
@@ -724,7 +724,7 @@ where
         {
             let is_root_inode = *current_inode == ROOT_INODE;
             if is_root_inode {
-                if result.len() < limit {
+                if limit.map_or(true, |limit| result.len() < limit) {
                     // Freeze the result
                     result.push(resolve_item_stack.to_vec());
                 }
@@ -737,7 +737,7 @@ where
             };
             visited_stack.insert(current_inode.clone());
             'scan_loop: for (parent, names) in current_info.links.iter() {
-                if result.len() >= limit {
+                if limit.map_or(false, |limit| result.len() >= limit) {
                     break 'scan_loop;
                 }
                 if visited_stack.contains(parent) {
@@ -747,7 +747,7 @@ where
                     continue;
                 }
                 for name in names.iter() {
-                    if result.len() >= limit {
+                    if limit.map_or(false, |limit| result.len() >= limit) {
                         break 'scan_loop;
                     }
                     resolve_item_stack.push(InodeResolveItem {
@@ -795,6 +795,11 @@ where
                 links: &mut inode_value.links,
                 data: &mut inode_value.data,
             })
+    }
+
+    /// Retrieves the backing ID of a given inode
+    pub fn get_backing_id(&self, inode: &Inode) -> Option<&BackingId> {
+        self.data.backing.get_by_left(inode)
     }
 
     /// Retrieves all children of a given parent inode.
@@ -967,7 +972,7 @@ mod tests {
         let child_name = OsString::from("child");
 
         // Insert the first child
-        let first_child_inode = Inode::new(2);
+        let first_child_inode = Inode::from(2);
         assert_eq!(
             mapper.insert_child(&root, child_name.clone(), None, |value_creator_params| {
                 assert!(value_creator_params.existing_data.is_none());
@@ -1040,7 +1045,7 @@ mod tests {
             }
             path.push(OsString::from(format!("file_{}", i)));
             entries.push((path, None, move |_: ValueCreatorParams<u64>| i));
-            expected_inodes.insert(Inode::new(i + 2)); // Start from 2 to avoid conflict with root_inode
+            expected_inodes.insert(Inode::from(i + 2)); // Start from 2 to avoid conflict with root_inode
         }
 
         // Perform batch insert
@@ -1051,7 +1056,7 @@ mod tests {
 
         // Check if all inserted inodes exist
         for i in 2..=(FILE_COUNT as u64 + 1) {
-            let inode = Inode::new(i);
+            let inode = Inode::from(i);
             assert!(mapper.get(&inode).is_some(), "{:?} should exist", inode);
         }
 
@@ -1142,13 +1147,13 @@ mod tests {
         assert!(root_path.is_empty());
 
         // Try to resolve a non-existent inode
-        assert!(mapper.resolve(&Inode::new(999)).is_none());
+        assert!(mapper.resolve(&Inode::from(999)).is_none());
     }
 
     #[test]
     fn test_resolve_invalid_inode() {
         let mapper = InodeMultiMapper::<u64, u64>::new(0);
-        let invalid_inode = Inode::new(999);
+        let invalid_inode = Inode::from(999);
 
         // Attempt to resolve an invalid inode
         let result = mapper.resolve(&invalid_inode);

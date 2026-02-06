@@ -699,12 +699,11 @@ impl<TId: FileIdType> FuseHandler<TId> for DefaultFuseHandler {
                 kind,
                 if cfg!(debug_assertions) {
                     format!(
-                        "read(file_id: {}, file_handle: {:?}, seek: {:?}, size: {}, read_flags: {:?}, flags: {:?}, lock_owner: {:?})",
+                        "read(file_id: {}, file_handle: {:?}, seek: {:?}, size: {}, flags: {:?}, lock_owner: {:?})",
                         file_id.display(),
                         file_handle,
                         seek,
                         size,
-                        read_flags,
                         flags,
                         lock_owner
                     )
@@ -713,7 +712,7 @@ impl<TId: FileIdType> FuseHandler<TId> for DefaultFuseHandler {
                 },
             )),
             HandlingMethod::Panic => panic!(
-                "[Not Implemented] read(file_id: {}, file_handle: {:?}, seek: {:?}, size: {}, read_flags: {:?}, flags: {:?}, lock_owner: {:?})",
+                "[Not Implemented] read(file_id: {}, file_handle: {:?}, seek: {:?}, size: {}, flags: {:?}, lock_owner: {:?})",
                 file_id.display(),
                 file_handle,
                 seek,
