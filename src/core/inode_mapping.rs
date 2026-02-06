@@ -440,7 +440,7 @@ where
 mod tests {
     use super::*;
     use std::ffi::OsStr;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     #[test]
     fn test_components_resolver() {

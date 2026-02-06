@@ -1,4 +1,4 @@
-use easy_fuser::prelude::*;
+use easy_fuser::{MountConfig, prelude::*};
 use easy_fuser::templates::{DefaultFuseHandler, mirror_fs::*};
 use std::path::PathBuf;
 use std::thread;
@@ -35,18 +35,12 @@ fn mount_fs<FS: MirrorFsTrait>() {
 
     // Mount the filesystem
     println!("Mounting MirrorFs...");
-    let config = {
-        let mut config = Config::default();
-        config.acl = fuser::SessionACL::Owner;
-        if cfg!(feature = "serial") {
-            config.n_threads = None;
-        } else {
-            config.n_threads = Some(4);
-        }
-        config.mount_options = vec![];
-        config
+    let config = MountConfig {
+        mount_options: vec![],
+        acl: SessionACL::Owner,
+        #[cfg(feature = "parallel")]
+        num_threads: 4,
     };
-
     let mount_result = mount(fs, &mount_dir, &config);
     match mount_result {
         Ok(_) => {

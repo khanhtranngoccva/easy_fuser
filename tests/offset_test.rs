@@ -1,5 +1,5 @@
-use easy_fuser::{MountConfig, prelude::*};
 use easy_fuser::templates::{DefaultFuseHandler, mirror_fs::*};
+use easy_fuser::{MountConfig, prelude::*};
 
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -21,7 +21,10 @@ fn test_mirror_fs_file_offsets() {
     let handle = std::thread::spawn(move || {
         let fs = MirrorFs::new(source_path.clone(), DefaultFuseHandler::new());
         let config = MountConfig {
-            
+            mount_options: vec![],
+            acl: SessionACL::Owner,
+            #[cfg(feature = "parallel")]
+            num_threads: 4,
         };
         mount(fs, &mntpoint_clone, &config).unwrap();
     });
