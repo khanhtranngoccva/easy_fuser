@@ -3,18 +3,19 @@ use std::{
     ffi::{OsStr, OsString},
     fmt::Debug,
     hash::Hash,
-    fmt::Debug,
-    hash::Hash,
     path::PathBuf,
-    sync::{Arc, {Arc, atomic::Ordering}},
+    sync::{Arc, atomic::Ordering},
 };
 
 use std::sync::{RwLock, atomic::AtomicU64};
 
 use fuser::INodeNo;
 
-use crate::{inode_mapper, types::*};
-use crate::{inode_mapper::InodeMapper, inode_multi_mapper::*};
+use crate::{
+    inode_mapper::{self, InodeMapper},
+    inode_multi_mapper::{self, InodeMultiMapper},
+    types::*,
+};
 
 pub(crate) const ROOT_INO: u64 = 1;
 
@@ -218,7 +219,10 @@ impl FileIdResolver for ComponentsResolver {
     }
 
     fn prune(&self, keep: &HashSet<Self::ResolvedType>) {
-        self.mapper.write().expect("Failed to acquire write lock").prune(keep);
+        self.mapper
+            .write()
+            .expect("Failed to acquire write lock")
+            .prune(keep);
     }
 
     fn rename(&self, parent: INodeNo, name: &OsStr, newparent: INodeNo, newname: &OsStr) {
@@ -313,19 +317,7 @@ where
     }
 
     fn resolve_id(&self, ino: INodeNo) -> Self::ResolvedType {
-        let first_path = self
-            .mapper
-            .read()
-            .unwrap()
-            .resolve(&Inode::from(ino))
-            .map(|components| {
-                components
-                    .iter()
-                    .map(|inode_info| (**inode_info.name).clone())
-                    .rev()
-                    .collect::<PathBuf>()
-            });
-        HybridId::new(Inode::from(ino), first_path, self.mapper.clone())
+        HybridId::new(Inode::from(ino), self.mapper.clone())
     }
 
     fn lookup(
@@ -342,14 +334,15 @@ where
                 .mapper
                 .read()
                 .expect("cannot acquire read lock")
-                .lookup(&parent, child) &&
-                // Backing ID must match to use the hot path 
-                lookup_result.backing_id.cloned() == id
+                .lookup(&parent, child)
             {
-                if increment {
-                    lookup_result.data.fetch_add(1, Ordering::SeqCst);
+                // Backing ID must match to use the hot path
+                if lookup_result.backing_id.cloned() == id {
+                    if increment {
+                        lookup_result.data.fetch_add(1, Ordering::SeqCst);
+                    }
+                    return INodeNo::from(lookup_result.inode.clone());
                 }
-                return INodeNo::from(lookup_result.inode.clone());
             }
         }
         // This scenario happens if the child node does not exist or the backing ID does not match
@@ -372,23 +365,6 @@ where
         )
     }
 
-    fn forget(&self, ino: INodeNo, nlookup: u64) {
-        let inode = Inode::from(ino);
-        {
-            // Optimistically assume we don't have to remove yet
-            let guard = self.mapper.read().expect("Failed to acquire read lock");
-            let inode_info = guard.get(&inode).expect("Failed to find inode");
-            if inode_info.data.fetch_sub(nlookup, Ordering::SeqCst) > 0 {
-                return;
-            }
-        }
-        self.mapper
-            .write()
-            .expect("Failed to acquire write lock")
-            .remove(&inode)
-            .unwrap();
-    }
-
     fn add_children(
         &self,
         parent: INodeNo,
@@ -396,7 +372,9 @@ where
         increment: bool,
     ) -> Vec<(OsString, INodeNo)> {
         let value_creator =
-            |value_creator: ValueCreatorParams<AtomicU64>| match value_creator.existing_data {
+            |value_creator: inode_multi_mapper::ValueCreatorParams<AtomicU64>| match value_creator
+                .existing_data
+            {
                 Some(nlookup) => {
                     let count = nlookup.load(Ordering::Relaxed);
                     AtomicU64::new(if increment { count + 1 } else { count })
@@ -421,122 +399,7 @@ where
             .collect()
     }
 
-    fn rename(&self, parent: INodeNo, name: &OsStr, newparent: INodeNo, newname: &OsStr) {
-        let parent_inode = Inode::from(parent);
-        let newparent_inode = Inode::from(newparent);
-        self.mapper
-            .write()
-            .expect("Failed to acquire write lock")
-            .rename(
-                &parent_inode,
-                name,
-                &newparent_inode,
-                newname.to_os_string(),
-            )
-            .expect("Failed to rename inode");
-    }
-}
-
-pub struct HybridResolver<BackingId>
-where
-    BackingId: Clone + Eq + Hash,
-{
-    mapper: Arc<RwLock<InodeMultiMapper<AtomicU64, BackingId>>>,
-}
-
-impl<BackingId> FileIdResolver for HybridResolver<BackingId>
-where
-    BackingId: Clone + Eq + Hash + Send + Sync + std::fmt::Debug + 'static,
-{
-    type ResolvedType = HybridId<BackingId>;
-
-    fn new() -> Self {
-        let instance = Arc::new(RwLock::new(InodeMultiMapper::new(AtomicU64::new(0))));
-        HybridResolver { mapper: instance }
-    }
-
-    fn resolve_id(&self, ino: u64) -> Self::ResolvedType {
-        HybridId::new(Inode::from(ino), self.mapper.clone())
-    }
-
-    fn lookup(
-        &self,
-        parent: u64,
-        child: &OsStr,
-        id: <Self::ResolvedType as FileIdType>::_Id,
-        increment: bool,
-    ) -> u64 {
-        let parent = Inode::from(parent);
-        {
-            // Optimistically assume the child exists
-            if let Some(lookup_result) = self
-                .mapper
-                .read()
-                .expect("cannot acquire read lock")
-                .lookup(&parent, child)
-            {
-                // Backing ID must match to use the hot path
-                if lookup_result.backing_id.cloned() == id {
-                    if increment {
-                        lookup_result.data.fetch_add(1, Ordering::SeqCst);
-                    }
-                    return u64::from(lookup_result.inode.clone());
-                }
-            }
-        }
-        // This scenario happens if the child node does not exist or the backing ID does not match
-        u64::from(
-            self.mapper
-                .write()
-                .expect("Failed to acquire write lock")
-                .insert_child(&parent, child.to_os_string(), id, |params| {
-                    // If the child node already exists, use the existing reference count
-                    let mut new_value = params
-                        .existing_data
-                        .map(|d| d.load(Ordering::SeqCst))
-                        .unwrap_or(0);
-                    if increment {
-                        new_value += 1;
-                    }
-                    AtomicU64::new(new_value)
-                })
-                .expect("Failed to insert child"),
-        )
-    }
-
-    fn add_children(
-        &self,
-        parent: u64,
-        children: Vec<(OsString, <Self::ResolvedType as FileIdType>::_Id)>,
-        increment: bool,
-    ) -> Vec<(OsString, u64)> {
-        let value_creator = |value_creator: ValueCreatorParams<AtomicU64>| {
-            if let Some(nlookup) = value_creator.existing_data {
-                let count = nlookup.load(Ordering::Relaxed);
-                AtomicU64::new(if increment { count + 1 } else { count })
-            } else {
-                AtomicU64::new(if increment { 1 } else { 0 })
-            }
-        };
-        let children_with_creator: Vec<_> = children
-            .iter()
-            .map(|(name, id)| (name.clone(), id.clone(), value_creator))
-            .collect();
-        let parent_inode = Inode::from(parent);
-        let inserted_children = self
-            .mapper
-            .write()
-            .expect("Failed to acquire write lock")
-            .insert_children(&parent_inode, children_with_creator)
-            .expect("Failed to insert children");
-        inserted_children
-            .into_iter()
-            .zip(children)
-            .map(|(inode, (name, _))| (name, u64::from(inode)))
-            .collect()
-    }
-
-    fn forget(&self, ino: u64, nlookup: u64) {
+    fn forget(&self, ino: INodeNo, nlookup: u64) {
         let inode = Inode::from(ino);
         {
             // Optimistically assume we don't have to remove yet
@@ -557,7 +420,7 @@ where
         // TODO
     }
 
-    fn rename(&self, parent: u64, name: &OsStr, newparent: u64, newname: &OsStr) {
+    fn rename(&self, parent: INodeNo, name: &OsStr, newparent: INodeNo, newname: &OsStr) {
         let parent_inode = Inode::from(parent);
         let newparent_inode = Inode::from(newparent);
         self.mapper
@@ -616,11 +479,11 @@ mod tests {
         // Test prune
         let keep = HashSet::new();
         resolver.prune(&keep);
-        
+
         // child_ino should be gone now because refcount was 0 (decremented by earlier forget) and we pruned it.
         // We can verify it's gone by trying to resolve it and expecting panic (as per other test) or just by knowing prune works.
         // But calling forget again is definitely wrong if it's gone.
-        
+
         // If we want to test that prune actually removed it, we should check existence.
         // But since we can't easily check existence without internal access, we rely on the fact that subsequent operations might fail or the other test.
     }
@@ -629,7 +492,7 @@ mod tests {
     #[should_panic(expected = "Failed to resolve inode")]
     fn test_components_resolver_prune_panics_on_resolved_deleted() {
         let resolver = ComponentsResolver::new();
-        let parent_ino = ROOT_INO;
+        let parent_ino = INodeNo(ROOT_INO);
         let child_ino = resolver.lookup(parent_ino, OsStr::new("child"), (), true);
         resolver.forget(child_ino, 1);
         resolver.prune(&HashSet::new());
@@ -773,7 +636,7 @@ mod tests {
         // Test lookup for non-existent file
         let non_existent_ino =
             resolver.lookup(root_ino, OsStr::new("non_existent"), Some(6), false);
-        assert_ne!(non_existent_ino, 0);
+        assert_ne!(non_existent_ino, INodeNo(0));
         let non_existent_path = resolver.resolve_id(non_existent_ino);
         assert_eq!(
             non_existent_path.first_path(),
@@ -808,115 +671,6 @@ mod tests {
 
         // Test path resolution after overriding a location with a new backing ID
         let paths = hard_link_id_2.all_paths(Some(100));
-        assert!(
-            !paths.contains(&PathBuf::from("dir1/dir2/hard_linked")),
-            "the path list should no longer contain the overridden location"
-        );
-        assert!(paths.contains(&PathBuf::from("hard_link")));
-        assert!(paths.contains(&PathBuf::from("dir1/hard_linked_2")));
-    }
-
-    #[test]
-    fn test_hybrid_resolver() {
-        let resolver = HybridResolver::<u64>::new();
-
-        // Test lookup and resolve_id for root
-        let root_ino = ROOT_INODE.into();
-        let root_id = resolver.resolve_id(root_ino);
-        assert_eq!(root_id.first_path(), Some(Path::new("")));
-
-        // Test lookup and resolve_id for child and create nested structures
-        let dir1_ino = resolver.lookup(root_ino, OsStr::new("dir1"), Some(1), true);
-        let dir1_id = resolver.resolve_id(dir1_ino);
-        assert_eq!(dir1_id.first_path(), Some(Path::new("dir1")));
-
-        let dir2_ino = resolver.lookup(dir1_ino, OsStr::new("dir2"), Some(2), true);
-        let dir2_id = resolver.resolve_id(dir2_ino);
-        assert_eq!(dir2_id.first_path(), Some(Path::new("dir1/dir2")));
-
-        // Test add_children
-        let grandchildren = vec![
-            (OsString::from("grandchild1"), Some(3)),
-            (OsString::from("grandchild2"), Some(4)),
-        ];
-        let added_grandchildren = resolver.add_children(dir2_ino, grandchildren, true);
-        assert_eq!(added_grandchildren.len(), 2);
-        for (name, ino) in added_grandchildren.iter() {
-            let child_path = resolver.resolve_id(*ino);
-            assert_eq!(
-                child_path.first_path(),
-                Some(Path::new("dir1/dir2").join(name).as_path())
-            );
-        }
-
-        // Test forget
-        resolver.forget(added_grandchildren[0].1, 1);
-
-        // Test rename within the same directory
-        resolver.rename(
-            dir2_ino,
-            OsStr::new("grandchild2"),
-            dir2_ino,
-            OsStr::new("grandchild2_renamed"),
-        );
-        let renamed_grandchild_path = resolver.resolve_id(added_grandchildren[1].1);
-        assert_eq!(
-            renamed_grandchild_path.first_path(),
-            Some(Path::new("dir1/dir2/grandchild2_renamed"))
-        );
-
-        // Test rename to a different directory
-        let dir3_ino = resolver.lookup(root_ino, OsStr::new("dir3"), Some(5), true);
-        resolver.rename(
-            dir2_ino,
-            OsStr::new("grandchild2_renamed"),
-            dir3_ino,
-            OsStr::new("grandchild2_renamed"),
-        );
-        let renamed_grandchild_path = resolver.resolve_id(added_grandchildren[1].1);
-        assert_eq!(
-            renamed_grandchild_path.first_path(),
-            Some(Path::new("dir3/grandchild2_renamed"))
-        );
-
-        // Test lookup for non-existent file
-        let non_existent_ino =
-            resolver.lookup(root_ino, OsStr::new("non_existent"), Some(6), false);
-        assert_ne!(non_existent_ino, INodeNo(0));
-        let non_existent_path = resolver.resolve_id(non_existent_ino);
-        assert_eq!(
-            non_existent_path.first_path(),
-            Some(Path::new("non_existent"))
-        );
-
-        // Test lookup for a file with existing backing ID
-        let hard_link_ino = resolver.lookup(root_ino, OsStr::new("hard_link"), Some(7), true);
-        let hard_link_id = resolver.resolve_id(hard_link_ino);
-        assert_eq!(hard_link_id.first_path(), Some(Path::new("hard_link")));
-
-        let hard_link_ino_2 = resolver.lookup(dir2_ino, OsStr::new("hard_linked"), Some(7), true);
-        let hard_link_id_2 = resolver.resolve_id(hard_link_ino_2);
-        assert_eq!(
-            hard_link_ino_2, hard_link_ino,
-            "hard link should be the same if callers supply the same ID"
-        );
-
-        resolver.lookup(dir1_ino, OsStr::new("hard_linked_2"), Some(7), true);
-        let paths = hard_link_id_2.paths(100);
-        assert!(paths.contains(&PathBuf::from("dir1/dir2/hard_linked")));
-        assert!(paths.contains(&PathBuf::from("hard_link")));
-        assert!(paths.contains(&PathBuf::from("dir1/hard_linked_2")));
-
-        // Overriding a location with a new backing ID should always create a new inode
-        let overridden_hard_link_ino =
-            resolver.lookup(dir2_ino, OsStr::new("hard_linked"), Some(8), true);
-        assert_ne!(
-            overridden_hard_link_ino, hard_link_ino,
-            "overridden location's inode should change upon encountering a new ID"
-        );
-
-        // Test path resolution after overriding a location with a new backing ID
-        let paths = hard_link_id_2.paths(100);
         assert!(
             !paths.contains(&PathBuf::from("dir1/dir2/hard_linked")),
             "the path list should no longer contain the overridden location"

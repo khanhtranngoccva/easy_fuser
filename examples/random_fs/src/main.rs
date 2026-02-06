@@ -77,7 +77,11 @@ impl FuseHandler<Inode> for RandomFS {
         _mode: u32,
         _umask: u32,
         _flags: OpenFlags,
+<<<<<<< HEAD
         _helper: CreateHelper<'_>,
+=======
+        _helper: CreateHelper,
+>>>>>>> bleeding-edge
     ) -> Result<
         (
             OwnedFileHandle,
@@ -174,7 +178,10 @@ impl FuseHandler<Inode> for RandomFS {
         _fh: BorrowedFileHandle,
         offset: SeekFrom,
         size: u32,
+<<<<<<< HEAD
         _read_flags: FUSEReadFlags,
+=======
+>>>>>>> bleeding-edge
         _flags: OpenFlags,
         _lock_owner: Option<LockOwner>,
     ) -> FuseResult<Vec<u8>> {
@@ -256,13 +263,13 @@ fn main() {
     let mountpoint = std::env::args()
         .nth(1)
         .expect("Usage: random_fs <MOUNTPOINT>");
-    let options = vec![
-        MountOption::RW,
-        MountOption::FSName("random_fs".to_string()),
-    ];
+    let mut config = easy_fuser::prelude::Config::default();
+    config.acl = easy_fuser::prelude::SessionACL::Owner;
+    config.n_threads = Some(1);
+    config.mount_options = vec![MountOption::RW, MountOption::FSName("random_fs".to_string())];
 
     let fs = RandomFS::new();
 
     println!("Mounting filesystem...");
-    easy_fuser::mount(fs, Path::new(&mountpoint), &options, 1).unwrap();
+    easy_fuser::mount(fs, Path::new(&mountpoint), &config).unwrap();
 }

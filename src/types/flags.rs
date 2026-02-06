@@ -8,7 +8,7 @@
 use bitflags::bitflags;
 
 bitflags! {
-    #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialEq, Eq, Hash)]
+    #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
     /// Flags used to check file accessibility.
     pub struct AccessMask: i32 {
         /// Check if the file exists.
@@ -55,7 +55,7 @@ impl From<CopyFileRangeFlags> for fuser::CopyFileRangeFlags {
 }
 
 bitflags! {
-    #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialEq, Eq, Hash)]
+    #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
     /// Flags used in fallocate calls.
     pub struct FallocateFlags: i32 {
         /// Retain file size; don't extend even if offset + len is greater
@@ -81,7 +81,7 @@ bitflags! {
 }
 
 bitflags! {
-    #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialEq, Eq, Hash)]
+    #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
     pub struct FUSEAttrFlags: u32 {
         const SUBMOUNT = 1 << 0;
         const DAX = 1 << 1;
@@ -171,18 +171,6 @@ bitflags! {
     pub struct FUSEReadFlags: i32 {
         const LOCKOWNER = 1 << 0;
         const _ = !0;
-    }
-}
-
-impl From<fuser::ReadFlags> for FUSEReadFlags {
-    fn from(flags: fuser::ReadFlags) -> Self {
-        FUSEReadFlags::from_bits_retain(flags.bits() as i32)
-    }
-}
-
-impl From<FUSEReadFlags> for fuser::ReadFlags {
-    fn from(flags: FUSEReadFlags) -> Self {
-        fuser::ReadFlags::from_bits_retain(flags.bits() as u32)
     }
 }
 

@@ -14,5 +14,10 @@ ctrlc = "3.4"
 tempfile = "3.2"
 
 [patch.crates-io]
+<<<<<<< HEAD
 # Bleeding edge patch for FUSE create() passthrough, will be removed when patch is merged
 fuser = { git = "https://github.com/khanhtranngoccva/fuser", branch = "passthrough" }
+=======
+# Use the updated branch 
+fuser = { git = "https://github.com/cberner/fuser", branch = "master" }
+>>>>>>> bleeding-edge

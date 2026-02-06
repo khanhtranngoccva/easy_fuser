@@ -110,7 +110,10 @@ impl FuseHandler<Inode> for HelloFS {
         _file_handle: BorrowedFileHandle,
         seek: SeekFrom,
         size: u32,
+<<<<<<< HEAD
         _read_flags: FUSEReadFlags,
+=======
+>>>>>>> bleeding-edge
         _flags: OpenFlags,
         _lock_owner: Option<LockOwner>,
     ) -> FuseResult<Vec<u8>> {
@@ -167,8 +170,12 @@ fn main() {
         .try_init();
 
     let mountpoint = std::env::args().nth(1).expect("Usage: hello <MOUNTPOINT>");
-    let options = vec![MountOption::RO, MountOption::FSName("hello".to_string())];
 
+    let mut config = easy_fuser::prelude::Config::default();
+    config.acl = easy_fuser::prelude::SessionACL::Owner;
+    config.n_threads = Some(1);
+    config.mount_options = vec![MountOption::RO, MountOption::FSName("hello".to_string())];
+    
     println!("Mounting FTP filesystem...");
-    easy_fuser::mount(HelloFS::new(), Path::new(&mountpoint), &options).unwrap();
+    easy_fuser::mount(HelloFS::new(), Path::new(&mountpoint), &config).unwrap();
 }

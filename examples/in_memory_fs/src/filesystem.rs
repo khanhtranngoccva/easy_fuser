@@ -26,7 +26,7 @@ impl InMemoryFS {
     pub fn new() -> Self {
         let mut fs = DataBank {
             inodes: HashMap::new(),
-            next_inode: Inode::from(2), // Root is 1
+            next_inode: Inode::new(2), // Root is 1
         };
 
         // Create root directory
@@ -155,7 +155,11 @@ impl FuseHandler<Inode> for InMemoryFS {
         mode: u32,
         _umask: u32,
         _flags: OpenFlags,
+<<<<<<< HEAD
         _helper: CreateHelper<'_>,
+=======
+        _helper: CreateHelper,
+>>>>>>> bleeding-edge
     ) -> Result<
         (
             OwnedFileHandle,
@@ -218,8 +222,8 @@ impl FuseHandler<Inode> for InMemoryFS {
         req: &RequestInfo,
         file_id: Inode,
         _file_handle: BorrowedFileHandle,
-        offset: i64,
-        length: i64,
+        offset: u64,
+        length: u64,
         mode: FallocateFlags,
     ) -> FuseResult<()> {
         self.access(req, file_id.clone(), AccessMask::CAN_WRITE)?;
@@ -366,7 +370,10 @@ impl FuseHandler<Inode> for InMemoryFS {
         _fh: BorrowedFileHandle,
         offset: SeekFrom,
         size: u32,
+<<<<<<< HEAD
         _read_flags: FUSEReadFlags,
+=======
+>>>>>>> bleeding-edge
         _flags: OpenFlags,
         _lock_owner: Option<LockOwner>,
     ) -> FuseResult<Vec<u8>> {

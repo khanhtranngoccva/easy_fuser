@@ -135,7 +135,10 @@ impl FuseHandler<Inode> for ZipFs {
         _file_handle: BorrowedFileHandle,
         seek: SeekFrom,
         size: u32,
+<<<<<<< HEAD
         _read_flags: FUSEReadFlags,
+=======
+>>>>>>> bleeding-edge
         _flags: OpenFlags,
         _lock_owner: Option<LockOwner>,
     ) -> FuseResult<Vec<u8>> {
