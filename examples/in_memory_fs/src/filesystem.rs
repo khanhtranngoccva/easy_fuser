@@ -155,11 +155,7 @@ impl FuseHandler<Inode> for InMemoryFS {
         mode: u32,
         _umask: u32,
         _flags: OpenFlags,
-<<<<<<< HEAD
-        _helper: CreateHelper<'_>,
-=======
         _helper: CreateHelper,
->>>>>>> bleeding-edge
     ) -> Result<
         (
             OwnedFileHandle,
@@ -370,10 +366,6 @@ impl FuseHandler<Inode> for InMemoryFS {
         _fh: BorrowedFileHandle,
         offset: SeekFrom,
         size: u32,
-<<<<<<< HEAD
-        _read_flags: FUSEReadFlags,
-=======
->>>>>>> bleeding-edge
         _flags: OpenFlags,
         _lock_owner: Option<LockOwner>,
     ) -> FuseResult<Vec<u8>> {

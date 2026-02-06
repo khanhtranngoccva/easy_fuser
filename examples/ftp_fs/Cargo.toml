@@ -24,10 +24,4 @@ async-trait = "0.1.68"
 tokio = { version = "1.42", features = ["full"] }
 
 [patch.crates-io]
-<<<<<<< HEAD
-# Bleeding edge patch for FUSE create() passthrough, will be removed when patch is merged
-fuser = { git = "https://github.com/khanhtranngoccva/fuser", branch = "passthrough" }
-=======
-# Use the updated branch 
-fuser = { git = "https://github.com/cberner/fuser", branch = "master" }
->>>>>>> bleeding-edge
+fuser = { git = "https://github.com/khanhtranngoccva/fuser", branch = "bleeding-edge" }
