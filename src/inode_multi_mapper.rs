@@ -1,3 +1,4 @@
+use super::inode_mapper::HasLookupCount;
 use crate::types::{Inode, ROOT_INODE};
 use bimap::BiHashMap;
 use std::{
@@ -7,7 +8,7 @@ use std::{
     fmt::Debug,
     hash::{Hash, Hasher},
     ops::Deref,
-    sync::Arc,
+    sync::{Arc, atomic::Ordering},
 };
 
 #[derive(Debug)]
@@ -35,6 +36,9 @@ where
     /// user-supplied backing IDs (e.g. using a stat and statfs call).
     backing: BiHashMap<Inode, BackingId>,
 }
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct InodeNotFound {}
 
 #[derive(Debug)]
 struct InodeValue<Data>
@@ -276,6 +280,16 @@ where
         }
     }
 
+    /// Overrides the backing ID of the root inode.
+    pub fn set_root_inode_backing_id(&mut self, backing_id: Option<BackingId>) -> () {
+        if let Some(id) = backing_id {
+            self.data.backing.insert(self.root_inode.clone(), id);
+        } else {
+            self.data.backing.remove_by_left(&self.root_inode);
+        }
+    }
+
+    /// Retrieves the root inode.
     pub fn get_root_inode(&self) -> Inode {
         self.root_inode.clone()
     }
@@ -659,55 +673,40 @@ where
 
     /// Resolves an inode to one combination of its full path components
     ///
+    /// # Returns
+    /// - `Ok(Some(result))` if the inode is found and the path components are resolved.
+    /// - `Ok(None)` if there is no way to trace back to the root inode, indicating an orphaned
+    /// inode or orphaned tree, or there is an infinite loop (eg: if the inode is linked to itself
+    /// and there is no way to trace back to the root inode).
+    /// - `Err(InodeNotFound)` if the inode is not found at all.
+    ///
     /// # Notes
-    /// - Due to the nature of an inode being able to have multiple links, there can be multiple combinations of path components
-    /// that resolve to the same inode. This method only returns the first combination of path components that
-    /// resolves to the inode.
-    /// - Returns `None` if any inode in the path is not found, indicating an incomplete or invalid path, or
-    /// there is an infinite loop (eg: if the inode is linked to itself and there is no way to trace back to the
-    /// root inode).
+    /// - Due to the nature of an inode being able to have multiple links, there can be multiple combinations
+    /// of path components that resolve to the same inode. This method only returns the first combination
+    /// of path components that resolves to the inode.
     /// - The root inode is identified when its parent is equal to itself and is never returned
-    pub fn resolve(&self, inode: &Inode) -> Option<Vec<InodeResolveItem<'_, Data>>> {
-        let mut visited = HashSet::new();
-        let mut result: Vec<InodeResolveItem<Data>> = Vec::new();
-        let mut current_info = self.get(inode)?;
-        let mut current_inode = inode.clone();
-
-        'resolution_loop: loop {
-            let is_root_inode = current_inode == ROOT_INODE;
-            if is_root_inode {
-                break 'resolution_loop;
-            }
-            for (parent, names) in current_info.links.iter() {
-                if visited.contains(parent) {
-                    // The parent inode has already been visited, do not follow, try another link
-                    continue;
-                }
-                // There must be at least one name, orphaned inodes cannot be resolved
-                if names.is_empty() {
-                    continue;
-                }
-                visited.insert(current_inode.clone());
-                current_inode = parent.clone();
-                result.push(InodeResolveItem {
-                    parent,
-                    name: names.iter().next().unwrap().as_ref(),
-                    inode: current_info,
-                });
-                current_info = self.get(&current_inode)?;
-                continue 'resolution_loop;
-            }
-            return None;
-        }
-        Some(result)
+    pub fn resolve(
+        &self,
+        inode: &Inode,
+    ) -> Result<Option<Vec<InodeResolveItem<'_, Data>>>, InodeNotFound> {
+        let all_result = self.resolve_all(inode, Some(1))?;
+        Ok(all_result.into_iter().next())
     }
 
-    /// Recursively resolve all possible combinations of path components that resolve to the given inode, up to a given limit.
+    /// Recursively resolve all possible combinations of path components that resolve to the given
+    /// inode, up to a given limit.
+    ///
+    /// # Returns
+    /// - `Ok(result)` if the inode is found. Any paths that connect the inode to the root inode
+    /// are returned, up to a given limit. The components are in reverse order.
+    /// - `Err(InodeNotFound)` if the inode is not found at all.
     pub fn resolve_all<'a>(
         &'a self,
         inode: &Inode,
         limit: Option<usize>,
-    ) -> Vec<Vec<InodeResolveItem<'a, Data>>> {
+    ) -> Result<Vec<Vec<InodeResolveItem<'a, Data>>>, InodeNotFound> {
+        // Check if the inode exists
+        let _ = self.get(inode).ok_or_else(|| InodeNotFound {})?;
         let mut result = vec![];
 
         fn scoped_resolve<'a, Data, BackingId>(
@@ -777,7 +776,7 @@ where
             &mut Vec::new(),
             &mut HashSet::new(),
         );
-        result
+        Ok(result)
     }
 
     pub fn get(&self, inode: &Inode) -> Option<InodeInfo<'_, Data>> {
@@ -955,6 +954,34 @@ where
     }
 }
 
+impl<Data, BackingId> InodeMultiMapper<Data, BackingId>
+where
+    BackingId: Clone + Eq + Hash + Debug,
+    Data: HasLookupCount + Send + Sync + 'static,
+{
+    pub fn prune(&mut self, keep: &HashSet<Inode>) {
+        let mut to_remove = Vec::new();
+
+        for (inode, value) in &self.data.inodes {
+            if *inode == ROOT_INODE {
+                continue;
+            }
+            if value.data.lookup_count().load(Ordering::SeqCst) == 0 {
+                // Check if inode is in keep list
+                if let Ok(_resolve_info) = self.resolve(inode) {
+                    if !keep.contains(&inode) {
+                        to_remove.push(inode.clone());
+                    }
+                }
+            }
+        }
+
+        for inode in to_remove {
+            self.remove(&inode);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1109,7 +1136,10 @@ mod tests {
             .unwrap();
 
         // Resolve the file inode
-        let path = mapper.resolve(&file_inode).unwrap();
+        let path = mapper
+            .resolve(&file_inode)
+            .expect("inode should exist")
+            .expect("inode should not be orphaned");
 
         // Check the resolved path (it should be in reverse order)
         assert_eq!(path.len(), 2);
@@ -1143,11 +1173,16 @@ mod tests {
         );
 
         // Resolve the root inode (should be empty)
-        let root_path = mapper.resolve(&ROOT_INODE).unwrap();
+        let root_path = mapper
+            .resolve(&ROOT_INODE)
+            .expect("root inode should exist")
+            .expect("root inode should not be orphaned");
         assert!(root_path.is_empty());
 
         // Try to resolve a non-existent inode
-        assert!(mapper.resolve(&Inode::from(999)).is_none());
+        mapper
+            .resolve(&Inode::from(999))
+            .expect_err("inode should not be found");
     }
 
     #[test]
@@ -1156,13 +1191,9 @@ mod tests {
         let invalid_inode = Inode::from(999);
 
         // Attempt to resolve an invalid inode
-        let result = mapper.resolve(&invalid_inode);
-
-        // Assert that the result is None
-        assert!(
-            result.is_none(),
-            "Resolving an invalid inode should return None"
-        );
+        mapper
+            .resolve(&invalid_inode)
+            .expect_err("inode should not be found");
     }
 
     #[test]

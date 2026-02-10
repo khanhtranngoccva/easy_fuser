@@ -58,7 +58,7 @@ where
     fuser_config.n_threads = Some(num_threads);
     fuser_config.mount_options = config.mount_options.to_vec();
     fuser_config.acl = config.acl.clone();
-    let driver = FuseDriver::new(filesystem, num_threads);
+    let driver = FuseDriver::new(filesystem, num_threads)?;
     mount2(driver, mountpoint, &fuser_config)
 }
 
@@ -114,7 +114,7 @@ where
     fuser_config.n_threads = Some(num_threads);
     fuser_config.mount_options = config.mount_options.to_vec();
     fuser_config.acl = config.acl.clone();
-    let driver = FuseDriver::new(filesystem, num_threads);
+    let driver = FuseDriver::new(filesystem, num_threads)?;
     let resolver = driver.resolver.clone();
     let session = spawn_mount2(driver, mountpoint, &fuser_config)?;
     Ok(FuseSession::new(session, resolver))

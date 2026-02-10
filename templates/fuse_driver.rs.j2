@@ -1,4 +1,5 @@
 use std::{
+    io,
     sync::Arc,
     collections::{HashMap, VecDeque},
     ffi::{OsStr, OsString},
@@ -40,6 +41,9 @@ type DirIter<TAttr> = HashMap<(INodeNo, u64), VecDeque<(OsString, INodeNo, TAttr
     use tokio::runtime::Runtime;
     use tokio::sync::Mutex;
 {% endif %}
+
+{% macro async_keyword() -%}{% if mode == "async" %}async{% endif %}{%- endmacro %}
+{% macro await_keyword() -%}{% if mode == "async" %}.await{% endif %}{%- endmacro %}
 
 pub(crate) struct FuseDriver<TId, THandler>
 where
@@ -85,25 +89,39 @@ where
         {% else %}
             num_threads: usize
         {% endif %}
-    ) -> FuseDriver<TId, THandler> {
+    ) -> io::Result<FuseDriver<TId, THandler>> {
         {% if mode == "parallel" %}
             #[cfg(feature = "deadlock_detection")]
             spawn_deadlock_checker();
         {% endif %}
 
-        FuseDriver {
-            resolver: Arc::new(TId::create_resolver()),
-            handler: Arc::new(handler),
+        let resolver = Arc::new(TId::create_resolver());
+        let handler = Arc::new(handler);
+        {% if mode == "async" %}
+            let runtime = Arc::new(Runtime::new().unwrap());
+            runtime.block_on(async {
+                Self::bootstrap_handler(&handler, resolver.clone()).await.map_err(|e| {
+                    io::Error::from_raw_os_error(e.raw_error())
+                })
+            })?;
+        {% else %}
+            Self::bootstrap_handler(&handler, resolver.clone()).map_err(|e| {
+                io::Error::from_raw_os_error(e.raw_error())
+            })?;
+        {% endif %}
+
+        Ok(FuseDriver {
+            resolver: resolver,
+            handler: handler,
             dirmap_iter: Arc::new(Mutex::new(HashMap::new())),
             dirmapplus_iter: Arc::new(Mutex::new(HashMap::new())),
-
             {% if mode == "parallel" %}
                 threadpool: ThreadPool::new(num_threads),
                 reply_threadpool: ThreadPool::new(num_threads),
             {% elif mode == "async" %}
-                runtime: Arc::new(Runtime::new().unwrap()),
+                runtime: runtime,
             {% endif %}
-        }
+        })
     }
 
     pub fn get_handler(&self) -> Arc<THandler> {
@@ -117,9 +135,31 @@ where
     pub fn get_dirmapplus_iter(&self) -> Arc<Mutex<DirIter<FileAttribute>>> {
         self.dirmapplus_iter.clone()
     }
+
+    {{ async_keyword() }} pub fn bootstrap_handler(
+        handler: &THandler,
+        resolver: Arc<TId::Resolver>,
+    ) -> FuseResult<()> {
+        handler.setup(resolver.clone()){{ await_keyword() }}?;
+        let lookup_root_result = handler.lookup_root(){{ await_keyword() }};
+        match lookup_root_result {
+            Ok(metadata) => {
+                let (id, _file_attr) = TId::extract_metadata(metadata);
+                resolver.lookup_root(id);
+            },
+            Err(e) => {
+                if e.kind() == ErrorKind::FunctionNotImplemented {
+                    // This is normal if the filesystem is not using HybridId, we'll just put a warning here but 
+                    // return the error to the caller
+                    warn!("[{}] lookup_root", e);
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+        Ok(())
+    }
 }
-
-
 
 impl<TId, THandler> fuser::Filesystem for FuseDriver<TId, THandler>
 where
@@ -187,7 +227,6 @@ where
             {% endcall %}
         },
     {%- endmacro %}
-
 
     fn init(&mut self, req: &Request, config: &mut KernelConfig) -> Result<(), std::io::Error> {
         let req = RequestInfo::from(req);
