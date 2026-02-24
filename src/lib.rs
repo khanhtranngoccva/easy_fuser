@@ -35,6 +35,7 @@ pub use session::{FusePruner, FuseSession};
 pub mod prelude {
     //! Re-exports the necessary types and functions from the `easy_fuser` crate.
     pub use super::MountConfig;
+    pub use super::core::{ComponentsResolver, HybridResolver, InodeResolver, PathResolver};
     pub use super::fuse_handler::FuseHandler;
     pub use super::session::{FusePruner, FuseSession};
     pub use super::types::*;
